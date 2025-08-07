@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "name": "Name"
+        },
+        "description": "Set up Galaxie NASCAR integration to get race data.",
+        "title": "Galaxie NASCAR"
+      }
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "galaxie_previous_race_track": {
+        "name": "Previous Race Track"
+      },
+      "galaxie_previous_race_date": {
+        "name": "Previous Race Date"
+      },
+      "galaxie_previous_race_distance": {
+        "name": "Previous Race Distance"
+      },
+      "galaxie_previous_race_laps": {
+        "name": "Previous Race Laps"
+      },
+      "galaxie_previous_race_cars": {
+        "name": "Previous Race Cars in Field"
+      },
+      "galaxie_previous_race_tv": {
+        "name": "Previous Race TV Broadcaster"
+      },
+      "galaxie_previous_race_radio": {
+        "name": "Previous Race Radio Broadcaster"
+      },
+      "galaxie_previous_race_playoff": {
+        "name": "Previous Race Playoff Round"
+      },
+      "galaxie_previous_race_winner": {
+        "name": "Previous Race Winner"
+      }
+    },
+    "binary_sensor": {
+      "galaxie_previous_race_status": {
+        "name": "Previous Race Status"
+      },
+      "galaxie_next_race_status": {
+        "name": "Next Race Status"
+      },
+      "galaxie_live_race_status": {
+        "name": "Live Race Status"
+      },
+      "galaxie_live_status": {
+        "name": "Live Race Status"
+      }
+    }
+  }
+}

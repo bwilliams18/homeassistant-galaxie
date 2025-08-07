@@ -1,0 +1,12 @@
+{
+  "domain": "galaxie",
+  "name": "Galaxie NASCAR Integration",
+  "documentation": "https://github.com/bwilliams18/homeassistant-galaxie",
+  "dependencies": [],
+  "codeowners": ["@bwilliams18"],
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "1.0.0",
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "icon": "logo.png"
+}
