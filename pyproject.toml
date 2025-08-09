@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homeassistant-galaxie"
+version = "1.0.0"
+description = "Home Assistant integration for Galaxie NASCAR analytics platform"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "bwilliams18", email = "bwilliams18@users.noreply.github.com"}
+]
+maintainers = [
+    {name = "bwilliams18", email = "bwilliams18@users.noreply.github.com"}
+]
+keywords = ["home-assistant", "nascar", "galaxie", "racing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Home Automation",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/bwilliams18/homeassistant-galaxie"
+Documentation = "https://github.com/bwilliams18/homeassistant-galaxie/tree/main/docs"
+Repository = "https://github.com/bwilliams18/homeassistant-galaxie"
+"Bug Tracker" = "https://github.com/bwilliams18/homeassistant-galaxie/issues"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["custom_components.galaxie"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=custom_components.galaxie",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+] 
