@@ -1,23 +1,20 @@
 """Sensor platform for Galaxie integration."""
 
 import logging
+from datetime import datetime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.sensor import (
     SensorEntity,
-    SensorStateClass,
     SensorDeviceClass,
+    SensorStateClass,
 )
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.helpers.typing import StateType
-from datetime import datetime
 
 from .const import DOMAIN, SERIES_MAPPING, FLAG_MAPPING
-from .device import (
-    get_previous_race_device,
-    get_next_race_device,
-    get_live_race_device,
-)
+from .device import get_previous_race_device, get_next_race_device, get_live_race_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,12 +75,15 @@ async def async_setup_entry(
             LiveRaceEndTimeSensor(coordinator),
             LiveRaceTotalLapsSensor(coordinator),
             LiveRaceActualLapsSensor(coordinator),
+            LiveRaceScheduledLapsSensor(coordinator),
+            LiveRaceScheduledDistanceSensor(coordinator),
             LiveRaceStageLapsSensor(coordinator),
             LiveRaceStageStartSensor(coordinator),
             LiveRaceStageRemainingSensor(coordinator),
             LiveRaceStageCompletedSensor(coordinator),
             LiveRaceStageEndSensor(coordinator),
             LiveRaceTrackSensor(coordinator),
+            LiveRaceTrackTzSensor(coordinator),
             LiveRaceLatSensor(coordinator),
             LiveRaceLngSensor(coordinator),
             LiveRaceTrackTypeSensor(coordinator),
@@ -490,6 +490,8 @@ class LiveRaceBaseSensor(SensorEntity):
         self._attr_unique_id = f"live_race_{self.sensor_type}"
         self._attr_name = f"Live Race {self.sensor_name}"
         self._attr_icon = self.icon
+        # Always use a single live race device
+        self._attr_device_info = get_live_race_device("live_race", "Live Race")
 
     @property
     def available(self) -> bool:
@@ -498,6 +500,8 @@ class LiveRaceBaseSensor(SensorEntity):
             self.coordinator.last_update_success
             and self.coordinator.data is not None
             and "live_race" in self.coordinator.data
+            and isinstance(self.coordinator.data["live_race"], list)
+            and len(self.coordinator.data["live_race"]) > 0
         )
 
     async def async_added_to_hass(self) -> None:
@@ -519,7 +523,7 @@ class LiveRaceBaseSensor(SensorEntity):
         data = self.coordinator.data
         if not data or "live_race" not in data:
             _LOGGER.debug("No live_race data available for sensor %s", self._attr_name)
-            return None
+            return STATE_UNAVAILABLE
 
         live_races = data["live_race"]
         if not live_races or not isinstance(live_races, list) or len(live_races) == 0:
@@ -527,18 +531,13 @@ class LiveRaceBaseSensor(SensorEntity):
                 "No valid live_race data for sensor %s (empty or invalid)",
                 self._attr_name,
             )
-            return None
+            return STATE_UNAVAILABLE
 
         # Get the first live race (assuming one active race at a time)
         race = live_races[0]
         if not isinstance(race, dict):
             _LOGGER.debug("Live race data is not a dict for sensor %s", self._attr_name)
-            return None
-
-        # Update device info for this live race
-        run_id = race.get("id", "unknown")
-        run_name = race.get("name", "Unknown Race")
-        self._attr_device_info = get_live_race_device(run_id, run_name)
+            return STATE_UNAVAILABLE
 
         value = self._extract_value(race)
         _LOGGER.debug("Live sensor %s found value: %s", self._attr_name, value)
@@ -625,6 +624,31 @@ class LiveRaceActualLapsSensor(LiveRaceBaseSensor):
         return race_data.get("actual_laps")
 
 
+class LiveRaceScheduledLapsSensor(LiveRaceBaseSensor):
+    """Live race scheduled laps sensor."""
+
+    sensor_type = "scheduled_laps"
+    sensor_name = "Scheduled Laps"
+    icon = "mdi:counter"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, race_data):
+        return race_data.get("scheduled_laps")
+
+
+class LiveRaceScheduledDistanceSensor(LiveRaceBaseSensor):
+    """Live race scheduled distance sensor."""
+
+    sensor_type = "scheduled_distance"
+    sensor_name = "Scheduled Distance"
+    icon = "mdi:map-marker-distance"
+    _attr_native_unit_of_measurement = "miles"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, race_data):
+        return race_data.get("scheduled_distance")
+
+
 class LiveRaceStageLapsSensor(LiveRaceBaseSensor):
     """Live race stage laps sensor."""
 
@@ -694,6 +718,17 @@ class LiveRaceTrackSensor(LiveRaceBaseSensor):
 
     def _extract_value(self, race_data):
         return race_data.get("track")
+
+
+class LiveRaceTrackTzSensor(LiveRaceBaseSensor):
+    """Live race track timezone sensor."""
+
+    sensor_type = "track_tz"
+    sensor_name = "Track Timezone"
+    icon = "mdi:clock-outline"
+
+    def _extract_value(self, race_data):
+        return race_data.get("track_tz")
 
 
 class LiveRaceLatSensor(LiveRaceBaseSensor):
@@ -803,4 +838,4 @@ class LiveRaceLengthSensor(LiveRaceBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def _extract_value(self, race_data):
-        return race_data.get("length")
+        return race_data.get("scheduled_distance")

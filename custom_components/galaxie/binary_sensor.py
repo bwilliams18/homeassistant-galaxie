@@ -72,7 +72,11 @@ class LiveRaceStatusBinarySensor(BinarySensorEntity):
 
         live_races = data["live_race"]
         # Check if there are any live races
-        is_live = isinstance(live_races, list) and len(live_races) > 0
+        is_live = (
+            isinstance(live_races, list) 
+            and len(live_races) > 0 
+            and all(isinstance(race, dict) for race in live_races)
+        )
         _LOGGER.debug(
             "Binary sensor %s: live_races=%s, is_live=%s",
             self._attr_name,
