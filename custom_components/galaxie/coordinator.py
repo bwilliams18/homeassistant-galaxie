@@ -45,13 +45,13 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
 
             result = {
                 "previous_race": (
-                    previous_race if not isinstance(previous_race, Exception) else []
+                    previous_race if isinstance(previous_race, list) else []
                 ),
                 "next_race": (
-                    next_race if not isinstance(next_race, Exception) else []
+                    next_race if isinstance(next_race, list) else []
                 ),
                 "live_race": (
-                    live_race if not isinstance(live_race, Exception) else []
+                    live_race if isinstance(live_race, list) else []
                 ),
             }
 
