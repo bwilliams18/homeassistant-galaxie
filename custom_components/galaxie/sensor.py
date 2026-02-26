@@ -11,10 +11,11 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
 from .const import DOMAIN, SERIES_MAPPING, FLAG_MAPPING
-from .device import get_previous_race_device, get_next_race_device, get_live_race_device
+from .device import get_previous_race_device, get_next_race_device, get_live_race_device, get_live_status_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +96,9 @@ async def async_setup_entry(
             LiveRaceLengthSensor(coordinator),
         ]
     )
+
+    # Add diagnostic sensors (attached to Live Status device)
+    entities.append(BackendVersionSensor(coordinator))
 
     _LOGGER.info("Created %d sensors", len(entities))
     _LOGGER.debug("Sensor entities: %s", [entity._attr_name for entity in entities])
@@ -839,3 +843,55 @@ class LiveRaceLengthSensor(LiveRaceBaseSensor):
 
     def _extract_value(self, race_data):
         return race_data.get("scheduled_distance")
+
+
+# Diagnostic Sensors
+class BackendVersionSensor(SensorEntity):
+    """Backend version diagnostic sensor."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+        self._attr_unique_id = "galaxie_backend_version"
+        self._attr_name = "Galaxie Backend Version"
+        self._attr_icon = "mdi:information-outline"
+        self._attr_device_info = get_live_status_device()
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.data is not None
+            and self.coordinator.data.get("config") is not None
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.coordinator.async_add_listener(self._handle_coordinator_update)
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the backend version string."""
+        config = self.coordinator.data.get("config") if self.coordinator.data else None
+        if config:
+            return config.get("version")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Return additional config attributes."""
+        config = self.coordinator.data.get("config") if self.coordinator.data else None
+        if config:
+            return {
+                "environment": config.get("environment"),
+                "timezone": config.get("timezone"),
+                "websockets_enabled": config.get("websockets_enabled"),
+            }
+        return None

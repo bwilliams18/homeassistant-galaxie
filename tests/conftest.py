@@ -1,14 +1,21 @@
 """Test configuration for the Galaxie integration."""
 
 import pytest
-from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
-
-from custom_components.galaxie.const import DOMAIN
 
 
-@pytest.fixture(autouse=True)
-async def setup_component(hass: HomeAssistant):
-    """Set up the Galaxie component."""
-    await async_setup_component(hass, DOMAIN, {})
-    await hass.async_block_till_done()
+@pytest.fixture
+def mock_coordinator():
+    """Create a mock coordinator for testing."""
+    from unittest.mock import MagicMock
+
+    coordinator = MagicMock()
+    coordinator.data = {
+        "previous_race": [],
+        "next_race": [],
+        "live_race": [],
+        "config": {"version": "2026.02.25", "environment": "production"},
+    }
+    coordinator.last_update_success = True
+    coordinator.async_add_listener = MagicMock()
+    coordinator.backend_version = "2026.02.25"
+    return coordinator

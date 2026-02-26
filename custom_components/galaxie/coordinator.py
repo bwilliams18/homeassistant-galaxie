@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import aiohttp
-from datetime import timedelta
+from datetime import datetime, timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import (
@@ -12,6 +12,7 @@ from .const import (
     API_ENDPOINTS,
     UPDATE_INTERVAL_PREVIOUS_NEXT,
     UPDATE_INTERVAL_LIVE,
+    UPDATE_INTERVAL_CONFIG,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,18 +31,46 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
         )
         self.session = session
         self.data = {}
+        self._config_data: dict | None = None
+        self._last_config_fetch: datetime | None = None
+
+    @property
+    def backend_version(self) -> str:
+        """Return the backend version string."""
+        if self._config_data:
+            return self._config_data.get("version", "unknown")
+        return "unknown"
+
+    def _should_fetch_config(self) -> bool:
+        """Return True if config data should be refreshed."""
+        if self._config_data is None or self._last_config_fetch is None:
+            return True
+        return (datetime.now() - self._last_config_fetch) >= UPDATE_INTERVAL_CONFIG
 
     async def _async_update_data(self):
         """Update data via API."""
         _LOGGER.info("Starting Galaxie data update")
         try:
-            # Fetch all data concurrently
-            previous_race, next_race, live_race = await asyncio.gather(
+            fetch_config = self._should_fetch_config()
+            tasks = [
                 self._fetch_previous_race(),
                 self._fetch_next_race(),
                 self._fetch_live_race(),
-                return_exceptions=True,
-            )
+            ]
+            if fetch_config:
+                tasks.append(self._fetch_config())
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            previous_race = results[0]
+            next_race = results[1]
+            live_race = results[2]
+
+            if fetch_config and len(results) > 3:
+                config_result = results[3]
+                if isinstance(config_result, dict):
+                    self._config_data = config_result
+                    self._last_config_fetch = datetime.now()
 
             result = {
                 "previous_race": (
@@ -53,6 +82,7 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                 "live_race": (
                     live_race if isinstance(live_race, list) else []
                 ),
+                "config": self._config_data,
             }
 
             _LOGGER.info("Galaxie data update completed successfully")
@@ -143,3 +173,24 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Error fetching live race data: %s", e)
             return []
+
+    async def _fetch_config(self):
+        """Fetch backend config data."""
+        url = f"{BASE_URL}{API_ENDPOINTS['config']}"
+        _LOGGER.debug("Fetching config data from: %s", url)
+        try:
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    _LOGGER.debug(
+                        "Config data received: version=%s, environment=%s",
+                        data.get("version"),
+                        data.get("environment"),
+                    )
+                    return data
+                else:
+                    _LOGGER.warning("Config API returned status %s", response.status)
+                    return None
+        except Exception as e:
+            _LOGGER.error("Error fetching config data: %s", e)
+            return None

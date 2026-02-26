@@ -41,6 +41,9 @@
       },
       "galaxie_previous_race_winner": {
         "name": "Previous Race Winner"
+      },
+      "galaxie_backend_version": {
+        "name": "Backend Version"
       }
     },
     "binary_sensor": {

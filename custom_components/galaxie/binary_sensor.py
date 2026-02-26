@@ -58,6 +58,9 @@ class LiveRaceStatusBinarySensor(BinarySensorEntity):
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        version = self.coordinator.backend_version
+        if version != "unknown":
+            self._attr_device_info = get_live_status_device(sw_version=version)
         self.async_write_ha_state()
 
     @property
