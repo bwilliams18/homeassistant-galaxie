@@ -1,12 +1,14 @@
 """Config flow for Galaxie integration."""
 
 import logging
+
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.const import CONF_NAME
-from .const import DOMAIN, DEFAULT_NAME
+
+from .const import DEFAULT_NAME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 

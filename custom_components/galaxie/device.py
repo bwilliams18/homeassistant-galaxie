@@ -1,11 +1,12 @@
 """Device for Galaxie integration."""
 
 from homeassistant.helpers.device_registry import DeviceInfo
+
 from .const import (
-    get_previous_race_device_info,
-    get_next_race_device_info,
     get_live_race_device_info,
     get_live_status_device_info,
+    get_next_race_device_info,
+    get_previous_race_device_info,
 )
 
 
@@ -33,7 +34,9 @@ def get_next_race_device(series_name: str, sw_version: str = "1.0.0") -> DeviceI
     )
 
 
-def get_live_race_device(run_id: str, run_name: str, sw_version: str = "1.0.0") -> DeviceInfo:
+def get_live_race_device(
+    run_id: str, run_name: str, sw_version: str = "1.0.0"
+) -> DeviceInfo:
     """Get device info for live race device."""
     device_info = get_live_race_device_info(run_id, run_name, sw_version=sw_version)
     return DeviceInfo(

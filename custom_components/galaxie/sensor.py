@@ -2,22 +2,26 @@
 
 import logging
 from datetime import datetime
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
 from homeassistant.components.sensor import (
-    SensorEntity,
     SensorDeviceClass,
+    SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_UNAVAILABLE, UnitOfSpeed, UnitOfTemperature
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from homeassistant.const import UnitOfTemperature, UnitOfSpeed
-
-from .const import DOMAIN, SERIES_MAPPING, FLAG_MAPPING
-from .device import get_previous_race_device, get_next_race_device, get_live_race_device, get_live_status_device
+from .const import DOMAIN, FLAG_MAPPING, SERIES_MAPPING
+from .device import (
+    get_live_race_device,
+    get_live_status_device,
+    get_next_race_device,
+    get_previous_race_device,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -966,8 +970,7 @@ class LiveRaceCautionCountSensor(LiveRaceBaseSensor):
         if not isinstance(flag_periods, list):
             return 0
         return sum(
-            1 for fp in flag_periods
-            if isinstance(fp, dict) and fp.get("flag") == 2
+            1 for fp in flag_periods if isinstance(fp, dict) and fp.get("flag") == 2
         )
 
 
@@ -1019,7 +1022,10 @@ class VehiclePositionSensor(SensorEntity):
         if not isinstance(vehicles, list):
             return None
         for vehicle in vehicles:
-            if isinstance(vehicle, dict) and vehicle.get("running_position") == self._position:
+            if (
+                isinstance(vehicle, dict)
+                and vehicle.get("running_position") == self._position
+            ):
                 return vehicle
         return None
 

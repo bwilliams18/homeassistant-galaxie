@@ -1,12 +1,13 @@
 """Binary sensor platform for Galaxie integration."""
 
 import logging
+
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.binary_sensor import BinarySensorEntity
 
-from .const import DOMAIN, DEVICE_CLASS_LIVE_STATUS
+from .const import DEVICE_CLASS_LIVE_STATUS, DOMAIN
 from .device import get_live_status_device
 
 _LOGGER = logging.getLogger(__name__)

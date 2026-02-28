@@ -104,9 +104,7 @@ class GalaxieWebSocketClient:
             except asyncio.CancelledError:
                 return
             except Exception:
-                _LOGGER.exception(
-                    "Unexpected WebSocket error for run %s", self._run_id
-                )
+                _LOGGER.exception("Unexpected WebSocket error for run %s", self._run_id)
             finally:
                 self._connected = False
                 self._ws = None
@@ -131,7 +129,9 @@ class GalaxieWebSocketClient:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            _LOGGER.warning("Received non-JSON WebSocket message for run %s", self._run_id)
+            _LOGGER.warning(
+                "Received non-JSON WebSocket message for run %s", self._run_id
+            )
             return
 
         msg_type = data.get("type")

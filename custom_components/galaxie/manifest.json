@@ -2,11 +2,11 @@
   "domain": "galaxie",
   "name": "Galaxie NASCAR Integration",
   "documentation": "https://github.com/bwilliams18/homeassistant-galaxie",
+  "issue_tracker": "https://github.com/bwilliams18/homeassistant-galaxie/issues",
   "dependencies": [],
   "codeowners": ["@bwilliams18"],
   "requirements": ["aiohttp>=3.8.0"],
   "version": "1.0.0",
   "config_flow": true,
-  "iot_class": "cloud_push",
-  "icon": "mdi:flag-checkered"
+  "iot_class": "cloud_push"
 }

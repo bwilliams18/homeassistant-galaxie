@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
+
 import aiohttp
-from datetime import datetime, timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
 from .const import (
-    DOMAIN,
-    BASE_URL,
-    WS_BASE_URL,
     API_ENDPOINTS,
-    UPDATE_INTERVAL_PREVIOUS_NEXT,
-    UPDATE_INTERVAL_LIVE,
+    BASE_URL,
+    DOMAIN,
     UPDATE_INTERVAL_CONFIG,
+    UPDATE_INTERVAL_LIVE,
     UPDATE_INTERVAL_WEATHER,
+    WS_BASE_URL,
 )
 from .websocket_client import GalaxieWebSocketClient
 
@@ -171,12 +172,8 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                 "previous_race": (
                     previous_race if isinstance(previous_race, list) else []
                 ),
-                "next_race": (
-                    next_race if isinstance(next_race, list) else []
-                ),
-                "live_race": (
-                    live_race if isinstance(live_race, list) else []
-                ),
+                "next_race": (next_race if isinstance(next_race, list) else []),
+                "live_race": (live_race if isinstance(live_race, list) else []),
                 "config": self._config_data,
                 "vehicle_list": self._ws_vehicle_data or [],
                 "weather": self._weather_data,
