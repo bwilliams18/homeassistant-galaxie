@@ -24,6 +24,7 @@ FLAG_MAPPING = {
 
 # API Configuration
 BASE_URL = "https://galaxie.app"
+WS_BASE_URL = "wss://galaxie.app"
 API_ENDPOINTS = {
     "previous_race": "/api/previous_race/",
     "next_race": "/api/next_race/",

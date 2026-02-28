@@ -1,5 +1,7 @@
 """Data coordinator for Galaxie integration."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import aiohttp
@@ -9,11 +11,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     DOMAIN,
     BASE_URL,
+    WS_BASE_URL,
     API_ENDPOINTS,
     UPDATE_INTERVAL_PREVIOUS_NEXT,
     UPDATE_INTERVAL_LIVE,
     UPDATE_INTERVAL_CONFIG,
 )
+from .websocket_client import GalaxieWebSocketClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +37,9 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
         self.data = {}
         self._config_data: dict | None = None
         self._last_config_fetch: datetime | None = None
+        self._ws_client: GalaxieWebSocketClient | None = None
+        self._current_run_id: str | None = None
+        self._ws_live_data: dict | None = None
 
     @property
     def backend_version(self) -> str:
@@ -47,16 +54,72 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
             return True
         return (datetime.now() - self._last_config_fetch) >= UPDATE_INTERVAL_CONFIG
 
+    def _ws_on_run_detail(self, data: dict) -> None:
+        """Handle run_detail push from WebSocket."""
+        self._ws_live_data = data
+        if self.data is not None:
+            self.data["live_race"] = [data]
+            self.async_set_updated_data(self.data)
+
+    def _ws_on_disconnect(self) -> None:
+        """Handle WebSocket disconnect -- resume REST polling for live data."""
+        _LOGGER.info("WebSocket disconnected, resuming REST polling for live data")
+        self._ws_client = None
+        self._current_run_id = None
+        self._ws_live_data = None
+
+    async def _manage_ws_connection(self, live_race_data: list) -> None:
+        """Start/stop WebSocket based on live race availability."""
+        if live_race_data and isinstance(live_race_data[0], dict):
+            run_id = live_race_data[0].get("id")
+            if run_id and run_id != self._current_run_id:
+                # New or different run -- disconnect old, connect new
+                if self._ws_client:
+                    await self._ws_client.stop()
+
+                self._current_run_id = run_id
+                ws_url = f"{WS_BASE_URL}/ws/runs/{run_id}/"
+                self._ws_client = GalaxieWebSocketClient(
+                    session=self.session,
+                    ws_url=ws_url,
+                    run_id=run_id,
+                    on_run_detail=self._ws_on_run_detail,
+                    on_disconnect=self._ws_on_disconnect,
+                )
+                self._ws_client.start()
+                _LOGGER.info("Started WebSocket for run %s", run_id)
+        else:
+            # No live race -- disconnect WS if active
+            if self._ws_client:
+                _LOGGER.info("No live race, stopping WebSocket")
+                await self._ws_client.stop()
+                self._ws_client = None
+                self._current_run_id = None
+                self._ws_live_data = None
+
+    async def async_shutdown(self) -> None:
+        """Clean up WebSocket connection on unload."""
+        if self._ws_client:
+            await self._ws_client.stop()
+            self._ws_client = None
+            self._current_run_id = None
+            self._ws_live_data = None
+
     async def _async_update_data(self):
         """Update data via API."""
-        _LOGGER.info("Starting Galaxie data update")
+        _LOGGER.debug("Starting Galaxie data update")
         try:
             fetch_config = self._should_fetch_config()
+
+            # If WS is connected and delivering data, skip REST live fetch
+            ws_active = self._ws_client is not None and self._ws_client.connected
+
             tasks = [
                 self._fetch_previous_race(),
                 self._fetch_next_race(),
-                self._fetch_live_race(),
             ]
+            if not ws_active:
+                tasks.append(self._fetch_live_race())
             if fetch_config:
                 tasks.append(self._fetch_config())
 
@@ -64,10 +127,17 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
 
             previous_race = results[0]
             next_race = results[1]
-            live_race = results[2]
 
-            if fetch_config and len(results) > 3:
-                config_result = results[3]
+            idx = 2
+            if not ws_active:
+                live_race = results[idx]
+                idx += 1
+            else:
+                # Use WS data
+                live_race = [self._ws_live_data] if self._ws_live_data else []
+
+            if fetch_config and idx < len(results):
+                config_result = results[idx]
                 if isinstance(config_result, dict):
                     self._config_data = config_result
                     self._last_config_fetch = datetime.now()
@@ -85,23 +155,16 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                 "config": self._config_data,
             }
 
-            _LOGGER.info("Galaxie data update completed successfully")
-            _LOGGER.info(
-                "Data summary: previous_race=%d items, next_race=%d items, live_race=%d items",
+            # Manage WebSocket lifecycle based on live race presence
+            await self._manage_ws_connection(result["live_race"])
+
+            _LOGGER.debug(
+                "Galaxie data update: previous=%d, next=%d, live=%d, ws=%s",
                 len(result["previous_race"]),
                 len(result["next_race"]),
                 len(result["live_race"]),
+                "connected" if ws_active else "off",
             )
-
-            # Debug: Log the actual data structure
-            if result["previous_race"]:
-                _LOGGER.debug(
-                    "Previous race data sample: %s", result["previous_race"][0]
-                )
-            if result["next_race"]:
-                _LOGGER.debug("Next race data sample: %s", result["next_race"][0])
-            if result["live_race"]:
-                _LOGGER.debug("Live race data sample: %s", result["live_race"][0])
 
             return result
 

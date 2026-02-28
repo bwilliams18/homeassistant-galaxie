@@ -76,8 +76,8 @@ class LiveRaceStatusBinarySensor(BinarySensorEntity):
         live_races = data["live_race"]
         # Check if there are any live races
         is_live = (
-            isinstance(live_races, list) 
-            and len(live_races) > 0 
+            isinstance(live_races, list)
+            and len(live_races) > 0
             and all(isinstance(race, dict) for race in live_races)
         )
         _LOGGER.debug(
@@ -87,3 +87,17 @@ class LiveRaceStatusBinarySensor(BinarySensorEntity):
             is_live,
         )
         return is_live
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Return WebSocket connection status as extra attributes."""
+        ws_client = getattr(self.coordinator, "_ws_client", None)
+        if ws_client is not None:
+            return {
+                "websocket_connected": ws_client.connected,
+                "websocket_run_id": ws_client.run_id,
+            }
+        return {
+            "websocket_connected": False,
+            "websocket_run_id": None,
+        }
