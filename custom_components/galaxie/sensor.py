@@ -14,6 +14,8 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
+from homeassistant.const import UnitOfTemperature, UnitOfSpeed
+
 from .const import DOMAIN, SERIES_MAPPING, FLAG_MAPPING
 from .device import get_previous_race_device, get_next_race_device, get_live_race_device, get_live_status_device
 
@@ -47,6 +49,8 @@ async def async_setup_entry(
                 PreviousRaceWinnerSensor(coordinator, series_name),
                 PreviousRaceActualDistanceSensor(coordinator, series_name),
                 PreviousRaceActualLapsSensor(coordinator, series_name),
+                PreviousRaceNameSensor(coordinator, series_name),
+                PreviousRaceTrackTypeSensor(coordinator, series_name),
             ]
         )
 
@@ -63,6 +67,8 @@ async def async_setup_entry(
                 NextRaceTVSensor(coordinator, series_name),
                 NextRaceRadioSensor(coordinator, series_name),
                 NextRacePlayoffSensor(coordinator, series_name),
+                NextRaceNameSensor(coordinator, series_name),
+                NextRaceTrackTypeSensor(coordinator, series_name),
             ]
         )
 
@@ -94,6 +100,26 @@ async def async_setup_entry(
             LiveRaceLapsRemainingSensor(coordinator),
             LiveRaceElapsedTimeSensor(coordinator),
             LiveRaceLengthSensor(coordinator),
+            LiveRaceSeriesSensor(coordinator),
+            LiveRacePitStopDeltaSensor(coordinator),
+            LiveRaceActualDistanceSensor(coordinator),
+            LiveRaceCautionCountSensor(coordinator),
+        ]
+    )
+
+    # Add vehicle position sensors (P1-P5)
+    for position in range(1, 6):
+        entities.append(VehiclePositionSensor(coordinator, position))
+
+    # Add weather sensors
+    entities.extend(
+        [
+            WeatherTemperatureSensor(coordinator),
+            WeatherHumiditySensor(coordinator),
+            WeatherWindSpeedSensor(coordinator),
+            WeatherWindDirectionSensor(coordinator),
+            WeatherRainChanceSensor(coordinator),
+            WeatherConditionsSensor(coordinator),
         ]
     )
 
@@ -314,6 +340,28 @@ class PreviousRaceActualLapsSensor(PreviousRaceBaseSensor):
         return race_data.get("actual_laps")
 
 
+class PreviousRaceNameSensor(PreviousRaceBaseSensor):
+    """Previous race name sensor."""
+
+    sensor_type = "name"
+    sensor_name = "Race Name"
+    icon = "mdi:flag-checkered"
+
+    def _extract_value(self, race_data):
+        return race_data.get("name")
+
+
+class PreviousRaceTrackTypeSensor(PreviousRaceBaseSensor):
+    """Previous race track type sensor."""
+
+    sensor_type = "track_type"
+    sensor_name = "Track Type"
+    icon = "mdi:road-variant"
+
+    def _extract_value(self, race_data):
+        return race_data.get("track_type")
+
+
 # Next Race Sensors
 class NextRaceBaseSensor(SensorEntity):
     """Base class for next race sensors."""
@@ -483,6 +531,28 @@ class NextRacePlayoffSensor(NextRaceBaseSensor):
 
     def _extract_value(self, race_data):
         return race_data.get("playoff_round")
+
+
+class NextRaceNameSensor(NextRaceBaseSensor):
+    """Next race name sensor."""
+
+    sensor_type = "name"
+    sensor_name = "Race Name"
+    icon = "mdi:flag-checkered"
+
+    def _extract_value(self, race_data):
+        return race_data.get("name")
+
+
+class NextRaceTrackTypeSensor(NextRaceBaseSensor):
+    """Next race track type sensor."""
+
+    sensor_type = "track_type"
+    sensor_name = "Track Type"
+    icon = "mdi:road-variant"
+
+    def _extract_value(self, race_data):
+        return race_data.get("track_type")
 
 
 # Live Race Sensors
@@ -843,6 +913,276 @@ class LiveRaceLengthSensor(LiveRaceBaseSensor):
 
     def _extract_value(self, race_data):
         return race_data.get("scheduled_distance")
+
+
+class LiveRaceSeriesSensor(LiveRaceBaseSensor):
+    """Live race series sensor."""
+
+    sensor_type = "series"
+    sensor_name = "Series"
+    icon = "mdi:trophy"
+
+    def _extract_value(self, race_data):
+        series_id = race_data.get("series")
+        return SERIES_MAPPING.get(series_id, f"Unknown ({series_id})")
+
+
+class LiveRacePitStopDeltaSensor(LiveRaceBaseSensor):
+    """Live race pit stop delta sensor."""
+
+    sensor_type = "pit_stop_delta"
+    sensor_name = "Pit Stop Delta"
+    icon = "mdi:timer-sand"
+    _attr_native_unit_of_measurement = "s"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, race_data):
+        return race_data.get("pit_stop_delta")
+
+
+class LiveRaceActualDistanceSensor(LiveRaceBaseSensor):
+    """Live race actual distance sensor."""
+
+    sensor_type = "actual_distance"
+    sensor_name = "Actual Distance"
+    icon = "mdi:map-marker-distance"
+    _attr_native_unit_of_measurement = "miles"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, race_data):
+        return race_data.get("actual_distance")
+
+
+class LiveRaceCautionCountSensor(LiveRaceBaseSensor):
+    """Live race caution count sensor."""
+
+    sensor_type = "caution_count"
+    sensor_name = "Caution Count"
+    icon = "mdi:alert"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, race_data):
+        flag_periods = race_data.get("flag_periods", [])
+        if not isinstance(flag_periods, list):
+            return 0
+        return sum(
+            1 for fp in flag_periods
+            if isinstance(fp, dict) and fp.get("flag") == 2
+        )
+
+
+# Vehicle Position Sensors
+class VehiclePositionSensor(SensorEntity):
+    """Sensor for a specific running position in the live race."""
+
+    def __init__(self, coordinator, position: int):
+        self.coordinator = coordinator
+        self._position = position
+        self._attr_unique_id = f"live_race_position_{position}"
+        self._attr_name = f"Live Race Position {position}"
+        self._attr_icon = "mdi:podium"
+        self._attr_device_info = get_live_race_device("live_race", "Live Race")
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.data is not None
+            and "live_race" in self.coordinator.data
+            and isinstance(self.coordinator.data["live_race"], list)
+            and len(self.coordinator.data["live_race"]) > 0
+            and "vehicle_list" in self.coordinator.data
+            and isinstance(self.coordinator.data["vehicle_list"], list)
+            and len(self.coordinator.data["vehicle_list"]) > 0
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.coordinator.async_add_listener(self._handle_coordinator_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """When entity will be removed from hass."""
+        await super().async_will_remove_from_hass()
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    def _find_vehicle_at_position(self) -> dict | None:
+        """Find the vehicle at this position."""
+        data = self.coordinator.data
+        if not data or "vehicle_list" not in data:
+            return None
+        vehicles = data["vehicle_list"]
+        if not isinstance(vehicles, list):
+            return None
+        for vehicle in vehicles:
+            if isinstance(vehicle, dict) and vehicle.get("running_position") == self._position:
+                return vehicle
+        return None
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the driver name at this position."""
+        vehicle = self._find_vehicle_at_position()
+        if vehicle:
+            return vehicle.get("display_name")
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """Return vehicle details as extra attributes."""
+        vehicle = self._find_vehicle_at_position()
+        if vehicle:
+            return {
+                "vehicle_number": vehicle.get("vehicle_number"),
+                "team_name": vehicle.get("team_name"),
+                "manufacturer": vehicle.get("manufacturer"),
+                "sponsor": vehicle.get("sponsor"),
+            }
+        return None
+
+
+# Weather Sensors
+class WeatherBaseSensor(SensorEntity):
+    """Base class for track weather sensors."""
+
+    def __init__(self, coordinator):
+        self.coordinator = coordinator
+        self._attr_unique_id = f"live_race_weather_{self.sensor_type}"
+        self._attr_name = f"Track Weather {self.sensor_name}"
+        self._attr_icon = self.icon
+        self._attr_device_info = get_live_race_device("live_race", "Live Race")
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.data is not None
+            and "live_race" in self.coordinator.data
+            and isinstance(self.coordinator.data["live_race"], list)
+            and len(self.coordinator.data["live_race"]) > 0
+            and self.coordinator.data.get("weather") is not None
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.coordinator.async_add_listener(self._handle_coordinator_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """When entity will be removed from hass."""
+        await super().async_will_remove_from_hass()
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the weather value."""
+        data = self.coordinator.data
+        if not data or not data.get("weather"):
+            return None
+        return self._extract_value(data["weather"])
+
+    def _extract_value(self, weather_data):
+        """Extract value from weather data - to be implemented by subclasses."""
+        raise NotImplementedError
+
+
+class WeatherTemperatureSensor(WeatherBaseSensor):
+    """Track temperature sensor."""
+
+    sensor_type = "temperature"
+    sensor_name = "Temperature"
+    icon = "mdi:thermometer"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, weather_data):
+        current = weather_data.get("current", {})
+        return current.get("temp")
+
+
+class WeatherHumiditySensor(WeatherBaseSensor):
+    """Track humidity sensor."""
+
+    sensor_type = "humidity"
+    sensor_name = "Humidity"
+    icon = "mdi:water-percent"
+    _attr_device_class = SensorDeviceClass.HUMIDITY
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, weather_data):
+        current = weather_data.get("current", {})
+        return current.get("humidity")
+
+
+class WeatherWindSpeedSensor(WeatherBaseSensor):
+    """Track wind speed sensor."""
+
+    sensor_type = "wind_speed"
+    sensor_name = "Wind Speed"
+    icon = "mdi:weather-windy"
+    _attr_device_class = SensorDeviceClass.WIND_SPEED
+    _attr_native_unit_of_measurement = UnitOfSpeed.MILES_PER_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, weather_data):
+        current = weather_data.get("current", {})
+        return current.get("wind_speed")
+
+
+class WeatherWindDirectionSensor(WeatherBaseSensor):
+    """Track wind direction sensor."""
+
+    sensor_type = "wind_direction"
+    sensor_name = "Wind Direction"
+    icon = "mdi:compass"
+    _attr_native_unit_of_measurement = "°"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, weather_data):
+        current = weather_data.get("current", {})
+        return current.get("wind_deg")
+
+
+class WeatherRainChanceSensor(WeatherBaseSensor):
+    """Track rain chance sensor (next hour precipitation probability)."""
+
+    sensor_type = "rain_chance"
+    sensor_name = "Rain Chance"
+    icon = "mdi:weather-rainy"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _extract_value(self, weather_data):
+        hourly = weather_data.get("hourly", [])
+        if hourly and isinstance(hourly, list) and len(hourly) > 0:
+            pop = hourly[0].get("pop", 0)
+            return round(pop * 100) if pop is not None else None
+        return None
+
+
+class WeatherConditionsSensor(WeatherBaseSensor):
+    """Track weather conditions sensor."""
+
+    sensor_type = "conditions"
+    sensor_name = "Conditions"
+    icon = "mdi:weather-partly-cloudy"
+
+    def _extract_value(self, weather_data):
+        current = weather_data.get("current", {})
+        weather_list = current.get("weather", [])
+        if weather_list and isinstance(weather_list, list) and len(weather_list) > 0:
+            return weather_list[0].get("main")
+        return None
 
 
 # Diagnostic Sensors

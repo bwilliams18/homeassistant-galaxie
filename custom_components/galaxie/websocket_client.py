@@ -24,12 +24,14 @@ class GalaxieWebSocketClient:
         ws_url: str,
         run_id: str,
         on_run_detail: Callable[[dict[str, Any]], None],
+        on_vehicle_list: Callable[[list], None],
         on_disconnect: Callable[[], None],
     ) -> None:
         self._session = session
         self._ws_url = ws_url
         self._run_id = run_id
         self._on_run_detail = on_run_detail
+        self._on_vehicle_list = on_vehicle_list
         self._on_disconnect = on_disconnect
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._task: asyncio.Task | None = None
@@ -137,5 +139,9 @@ class GalaxieWebSocketClient:
             payload = data.get("data")
             if payload is not None:
                 self._on_run_detail(payload)
+        elif msg_type == "vehicle_list":
+            payload = data.get("data")
+            if payload is not None:
+                self._on_vehicle_list(payload)
         # All other message types (Arrow-encoded vehicle_laps, pit_stops, etc.)
-        # are silently ignored - HA only needs the run_detail JSON data.
+        # are silently ignored.

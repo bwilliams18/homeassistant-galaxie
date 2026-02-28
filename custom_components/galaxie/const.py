@@ -36,6 +36,7 @@ API_ENDPOINTS = {
 UPDATE_INTERVAL_PREVIOUS_NEXT = timedelta(minutes=15)
 UPDATE_INTERVAL_LIVE = timedelta(seconds=15)
 UPDATE_INTERVAL_CONFIG = timedelta(hours=1)
+UPDATE_INTERVAL_WEATHER = timedelta(minutes=5)
 
 # Device classes
 DEVICE_CLASS_LIVE_STATUS = "connectivity"

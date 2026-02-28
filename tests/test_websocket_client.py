@@ -17,11 +17,13 @@ from custom_components.galaxie.websocket_client import (
 
 def _make_ws_client(
     on_run_detail=None,
+    on_vehicle_list=None,
     on_disconnect=None,
 ):
     """Create a WebSocket client with mock dependencies."""
     session = AsyncMock()
     on_run_detail = on_run_detail or MagicMock()
+    on_vehicle_list = on_vehicle_list or MagicMock()
     on_disconnect = on_disconnect or MagicMock()
 
     client = GalaxieWebSocketClient(
@@ -29,14 +31,15 @@ def _make_ws_client(
         ws_url="wss://galaxie.app/ws/runs/test-run-id/",
         run_id="test-run-id",
         on_run_detail=on_run_detail,
+        on_vehicle_list=on_vehicle_list,
         on_disconnect=on_disconnect,
     )
-    return client, session, on_run_detail, on_disconnect
+    return client, session, on_run_detail, on_vehicle_list, on_disconnect
 
 
 def test_initial_state():
     """Test client initial state."""
-    client, _, _, _ = _make_ws_client()
+    client, _, _, _, _ = _make_ws_client()
 
     assert client.connected is False
     assert client.run_id == "test-run-id"
@@ -44,7 +47,7 @@ def test_initial_state():
 
 def test_handle_run_detail_message():
     """Test that run_detail messages are routed to the callback."""
-    client, _, on_run_detail, _ = _make_ws_client()
+    client, _, on_run_detail, _, _ = _make_ws_client()
 
     run_data = {"id": "test-run-id", "lap_number": 42, "flag": 1}
     raw = json.dumps({"type": "run_detail", "data": run_data})
@@ -55,7 +58,7 @@ def test_handle_run_detail_message():
 
 def test_handle_run_detail_missing_data():
     """Test that run_detail without data payload is ignored."""
-    client, _, on_run_detail, _ = _make_ws_client()
+    client, _, on_run_detail, _, _ = _make_ws_client()
 
     raw = json.dumps({"type": "run_detail"})
     client._handle_message(raw)
@@ -63,20 +66,45 @@ def test_handle_run_detail_missing_data():
     on_run_detail.assert_not_called()
 
 
+def test_handle_vehicle_list_message():
+    """Test that vehicle_list messages are routed to the callback."""
+    client, _, _, on_vehicle_list, _ = _make_ws_client()
+
+    vehicle_data = [
+        {"vehicle_id": 1, "display_name": "Driver A", "running_position": 1},
+        {"vehicle_id": 2, "display_name": "Driver B", "running_position": 2},
+    ]
+    raw = json.dumps({"type": "vehicle_list", "data": vehicle_data})
+    client._handle_message(raw)
+
+    on_vehicle_list.assert_called_once_with(vehicle_data)
+
+
+def test_handle_vehicle_list_missing_data():
+    """Test that vehicle_list without data payload is ignored."""
+    client, _, _, on_vehicle_list, _ = _make_ws_client()
+
+    raw = json.dumps({"type": "vehicle_list"})
+    client._handle_message(raw)
+
+    on_vehicle_list.assert_not_called()
+
+
 def test_handle_arrow_messages_ignored():
     """Test that Arrow-encoded message types are silently ignored."""
-    client, _, on_run_detail, _ = _make_ws_client()
+    client, _, on_run_detail, on_vehicle_list, _ = _make_ws_client()
 
     for msg_type in ["vehicle_laps", "pit_stops", "driver_results", "lap_time_falloff"]:
         raw = json.dumps({"type": msg_type, "data": "base64arrowdata"})
         client._handle_message(raw)
 
     on_run_detail.assert_not_called()
+    on_vehicle_list.assert_not_called()
 
 
 def test_handle_unknown_message_type():
     """Test that unknown message types are ignored."""
-    client, _, on_run_detail, _ = _make_ws_client()
+    client, _, on_run_detail, _, _ = _make_ws_client()
 
     raw = json.dumps({"type": "some_future_type", "data": {}})
     client._handle_message(raw)
@@ -86,7 +114,7 @@ def test_handle_unknown_message_type():
 
 def test_handle_invalid_json():
     """Test that non-JSON messages are handled gracefully."""
-    client, _, on_run_detail, _ = _make_ws_client()
+    client, _, on_run_detail, _, _ = _make_ws_client()
 
     client._handle_message("not valid json {{{")
 
@@ -96,7 +124,7 @@ def test_handle_invalid_json():
 @pytest.mark.asyncio
 async def test_start_creates_task():
     """Test that start() creates a background task."""
-    client, session, _, _ = _make_ws_client()
+    client, session, _, _, _ = _make_ws_client()
 
     # Make ws_connect raise immediately so the loop exits on cancel
     def raise_on_connect(*args, **kwargs):
@@ -114,7 +142,7 @@ async def test_start_creates_task():
 @pytest.mark.asyncio
 async def test_stop_cancels_task():
     """Test that stop() cancels the background task and resets state."""
-    client, session, _, _ = _make_ws_client()
+    client, session, _, _, _ = _make_ws_client()
 
     # Create a task that blocks
     async def block_forever():
@@ -132,7 +160,7 @@ async def test_stop_cancels_task():
 @pytest.mark.asyncio
 async def test_stop_when_not_started():
     """Test that stop() works even if never started."""
-    client, _, _, _ = _make_ws_client()
+    client, _, _, _, _ = _make_ws_client()
 
     await client.stop()  # Should not raise
     assert client.connected is False
@@ -141,7 +169,7 @@ async def test_stop_when_not_started():
 @pytest.mark.asyncio
 async def test_reconnect_backoff_increases():
     """Test that reconnection backoff increases exponentially."""
-    client, session, _, on_disconnect = _make_ws_client()
+    client, session, _, _, on_disconnect = _make_ws_client()
 
     connect_count = 0
     sleep_durations = []

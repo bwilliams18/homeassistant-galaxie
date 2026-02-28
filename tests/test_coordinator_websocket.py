@@ -167,6 +167,7 @@ async def test_rest_live_fetch_skipped_when_ws_active():
         (200, []),  # next_race
         # No live_race call expected!
         (200, CONFIG_DATA),  # config
+        (200, {"current": {"temp": 75}}),  # weather (live race active)
     ])
     coordinator = _make_coordinator(mock_session)
 
@@ -184,8 +185,8 @@ async def test_rest_live_fetch_skipped_when_ws_active():
 
     # Should use WS data instead of REST
     assert data["live_race"] == [LIVE_RACE_DATA]
-    # Only 3 REST calls (previous, next, config) - no live
-    assert mock_session.get.call_count == 3
+    # 4 REST calls: previous, next, config, weather (no live)
+    assert mock_session.get.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -196,6 +197,7 @@ async def test_rest_fallback_when_ws_disconnected():
         (200, []),  # next_race
         (200, [LIVE_RACE_DATA]),  # live_race via REST
         (200, CONFIG_DATA),  # config
+        (200, {"current": {"temp": 75}}),  # weather (live race active)
     ])
     coordinator = _make_coordinator(mock_session)
 
@@ -212,8 +214,8 @@ async def test_rest_fallback_when_ws_disconnected():
 
     # Should fetch live data via REST
     assert data["live_race"] == [LIVE_RACE_DATA]
-    # All 4 REST calls made
-    assert mock_session.get.call_count == 4
+    # 5 REST calls: previous, next, live, config, weather
+    assert mock_session.get.call_count == 5
 
 
 @pytest.mark.asyncio
@@ -247,12 +249,14 @@ async def test_ws_on_disconnect_clears_state():
     coordinator._ws_client = MagicMock()
     coordinator._current_run_id = "abc-123"
     coordinator._ws_live_data = LIVE_RACE_DATA
+    coordinator._ws_vehicle_data = [{"display_name": "Driver A"}]
 
     coordinator._ws_on_disconnect()
 
     assert coordinator._ws_client is None
     assert coordinator._current_run_id is None
     assert coordinator._ws_live_data is None
+    assert coordinator._ws_vehicle_data is None
 
 
 @pytest.mark.asyncio
@@ -279,3 +283,135 @@ async def test_async_shutdown_no_op_without_ws():
     coordinator = _make_coordinator(mock_session)
 
     await coordinator.async_shutdown()  # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_ws_on_vehicle_list_updates_data():
+    """Test that WS vehicle_list callback updates coordinator data."""
+    mock_session = AsyncMock()
+    coordinator = _make_coordinator(mock_session)
+    coordinator.data = {
+        "previous_race": [],
+        "next_race": [],
+        "live_race": [],
+        "config": None,
+        "vehicle_list": [],
+        "weather": None,
+    }
+
+    vehicle_data = [
+        {"vehicle_id": 1, "display_name": "Driver A", "running_position": 1},
+        {"vehicle_id": 2, "display_name": "Driver B", "running_position": 2},
+    ]
+
+    with patch.object(coordinator, "async_set_updated_data") as mock_set:
+        coordinator._ws_on_vehicle_list(vehicle_data)
+
+    assert coordinator._ws_vehicle_data == vehicle_data
+    assert coordinator.data["vehicle_list"] == vehicle_data
+    mock_set.assert_called_once_with(coordinator.data)
+
+
+@pytest.mark.asyncio
+async def test_vehicle_list_in_update_data():
+    """Test that vehicle_list appears in coordinator data output."""
+    mock_session = _make_mock_session([
+        (200, []),  # previous_race
+        (200, []),  # next_race
+        (200, [LIVE_RACE_DATA]),  # live_race
+        (200, CONFIG_DATA),  # config
+    ])
+    coordinator = _make_coordinator(mock_session)
+
+    vehicle_data = [{"display_name": "Driver A", "running_position": 1}]
+    coordinator._ws_vehicle_data = vehicle_data
+
+    with patch.object(
+        coordinator, "_manage_ws_connection", new_callable=AsyncMock
+    ):
+        data = await coordinator._async_update_data()
+
+    assert data["vehicle_list"] == vehicle_data
+
+
+@pytest.mark.asyncio
+async def test_manage_ws_clears_vehicle_and_weather_on_no_live():
+    """Test that vehicle and weather data are cleared when no live race."""
+    mock_session = AsyncMock()
+    coordinator = _make_coordinator(mock_session)
+
+    mock_client = AsyncMock()
+    coordinator._ws_client = mock_client
+    coordinator._current_run_id = "abc-123"
+    coordinator._ws_vehicle_data = [{"display_name": "Driver A"}]
+    coordinator._weather_data = {"current": {"temp": 75}}
+    coordinator._last_weather_fetch = MagicMock()
+
+    await coordinator._manage_ws_connection([])
+
+    assert coordinator._ws_vehicle_data is None
+    assert coordinator._weather_data is None
+    assert coordinator._last_weather_fetch is None
+
+
+@pytest.mark.asyncio
+async def test_weather_fetched_when_live_race():
+    """Test that weather is fetched when a live race is active."""
+    mock_session = _make_mock_session([
+        (200, []),  # previous_race
+        (200, []),  # next_race
+        (200, [LIVE_RACE_DATA]),  # live_race
+        (200, CONFIG_DATA),  # config
+        (200, {"current": {"temp": 75}}),  # weather
+    ])
+    coordinator = _make_coordinator(mock_session)
+
+    with patch.object(
+        coordinator,
+        "_manage_ws_connection",
+        new_callable=AsyncMock,
+        side_effect=lambda data: setattr(coordinator, "_current_run_id", "abc-123")
+        if data
+        else None,
+    ):
+        data = await coordinator._async_update_data()
+
+    assert data["weather"] == {"current": {"temp": 75}}
+    assert coordinator._weather_data == {"current": {"temp": 75}}
+    assert coordinator._last_weather_fetch is not None
+
+
+@pytest.mark.asyncio
+async def test_weather_not_fetched_when_no_live_race():
+    """Test that weather is not fetched when no live race."""
+    mock_session = _make_mock_session([
+        (200, []),  # previous_race
+        (200, []),  # next_race
+        (200, []),  # live_race (empty)
+        (200, CONFIG_DATA),  # config
+    ])
+    coordinator = _make_coordinator(mock_session)
+
+    with patch.object(
+        coordinator, "_manage_ws_connection", new_callable=AsyncMock
+    ):
+        data = await coordinator._async_update_data()
+
+    assert data["weather"] is None
+    # Only 4 REST calls (no weather fetch)
+    assert mock_session.get.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_async_shutdown_clears_weather():
+    """Test that async_shutdown clears weather data."""
+    mock_session = AsyncMock()
+    coordinator = _make_coordinator(mock_session)
+
+    coordinator._weather_data = {"current": {"temp": 75}}
+    coordinator._last_weather_fetch = MagicMock()
+
+    await coordinator.async_shutdown()
+
+    assert coordinator._weather_data is None
+    assert coordinator._last_weather_fetch is None

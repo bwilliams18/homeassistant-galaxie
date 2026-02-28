@@ -16,6 +16,7 @@ from .const import (
     UPDATE_INTERVAL_PREVIOUS_NEXT,
     UPDATE_INTERVAL_LIVE,
     UPDATE_INTERVAL_CONFIG,
+    UPDATE_INTERVAL_WEATHER,
 )
 from .websocket_client import GalaxieWebSocketClient
 
@@ -40,6 +41,9 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
         self._ws_client: GalaxieWebSocketClient | None = None
         self._current_run_id: str | None = None
         self._ws_live_data: dict | None = None
+        self._ws_vehicle_data: list | None = None
+        self._weather_data: dict | None = None
+        self._last_weather_fetch: datetime | None = None
 
     @property
     def backend_version(self) -> str:
@@ -54,11 +58,24 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
             return True
         return (datetime.now() - self._last_config_fetch) >= UPDATE_INTERVAL_CONFIG
 
+    def _should_fetch_weather(self) -> bool:
+        """Return True if weather data should be refreshed."""
+        if self._weather_data is None or self._last_weather_fetch is None:
+            return True
+        return (datetime.now() - self._last_weather_fetch) >= UPDATE_INTERVAL_WEATHER
+
     def _ws_on_run_detail(self, data: dict) -> None:
         """Handle run_detail push from WebSocket."""
         self._ws_live_data = data
         if self.data is not None:
             self.data["live_race"] = [data]
+            self.async_set_updated_data(self.data)
+
+    def _ws_on_vehicle_list(self, data: list) -> None:
+        """Handle vehicle_list push from WebSocket."""
+        self._ws_vehicle_data = data
+        if self.data is not None:
+            self.data["vehicle_list"] = data
             self.async_set_updated_data(self.data)
 
     def _ws_on_disconnect(self) -> None:
@@ -67,6 +84,7 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
         self._ws_client = None
         self._current_run_id = None
         self._ws_live_data = None
+        self._ws_vehicle_data = None
 
     async def _manage_ws_connection(self, live_race_data: list) -> None:
         """Start/stop WebSocket based on live race availability."""
@@ -84,6 +102,7 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                     ws_url=ws_url,
                     run_id=run_id,
                     on_run_detail=self._ws_on_run_detail,
+                    on_vehicle_list=self._ws_on_vehicle_list,
                     on_disconnect=self._ws_on_disconnect,
                 )
                 self._ws_client.start()
@@ -96,6 +115,9 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                 self._ws_client = None
                 self._current_run_id = None
                 self._ws_live_data = None
+                self._ws_vehicle_data = None
+            self._weather_data = None
+            self._last_weather_fetch = None
 
     async def async_shutdown(self) -> None:
         """Clean up WebSocket connection on unload."""
@@ -104,6 +126,9 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
             self._ws_client = None
             self._current_run_id = None
             self._ws_live_data = None
+            self._ws_vehicle_data = None
+        self._weather_data = None
+        self._last_weather_fetch = None
 
     async def _async_update_data(self):
         """Update data via API."""
@@ -153,10 +178,21 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                     live_race if isinstance(live_race, list) else []
                 ),
                 "config": self._config_data,
+                "vehicle_list": self._ws_vehicle_data or [],
+                "weather": self._weather_data,
             }
 
             # Manage WebSocket lifecycle based on live race presence
             await self._manage_ws_connection(result["live_race"])
+
+            # Fetch weather if live race is active and interval has elapsed
+            if result["live_race"] and self._current_run_id:
+                if self._should_fetch_weather():
+                    weather = await self._fetch_weather(self._current_run_id)
+                    if isinstance(weather, dict):
+                        self._weather_data = weather
+                        self._last_weather_fetch = datetime.now()
+                        result["weather"] = weather
 
             _LOGGER.debug(
                 "Galaxie data update: previous=%d, next=%d, live=%d, ws=%s",
@@ -256,4 +292,25 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                     return None
         except Exception as e:
             _LOGGER.error("Error fetching config data: %s", e)
+            return None
+
+    async def _fetch_weather(self, run_id: str):
+        """Fetch weather data for a live race."""
+        url = f"{BASE_URL}/api/runs/{run_id}/weather/"
+        _LOGGER.debug("Fetching weather data from: %s", url)
+        try:
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    _LOGGER.debug("Weather data received for run %s", run_id)
+                    return data
+                else:
+                    _LOGGER.warning(
+                        "Weather API returned status %s for run %s",
+                        response.status,
+                        run_id,
+                    )
+                    return None
+        except Exception as e:
+            _LOGGER.error("Error fetching weather data: %s", e)
             return None
