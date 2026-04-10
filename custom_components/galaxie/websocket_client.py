@@ -1,147 +1,225 @@
-"""WebSocket client for real-time Galaxie live race updates."""
+"""Centrifugo WebSocket client for real-time Galaxie live race updates.
+
+The Galaxie backend publishes live run broadcasts (``run_detail``,
+``vehicle_list``, and Arrow-encoded deltas) to a Centrifugo channel named
+``run:{run_id}``. This module wraps the official ``centrifuge-python`` SDK
+and exposes the same minimal callback surface the coordinator has always
+relied on:
+
+* ``on_run_detail(dict)``   — fired for each ``run_detail`` publication
+* ``on_vehicle_list(list)`` — fired for each ``vehicle_list`` publication
+* ``on_disconnect()``       — fired once after ``stop()`` (or a final failure)
+
+All other publication types (``vehicle_laps``, ``pit_stops``,
+``driver_results``, etc.) are silently ignored, matching prior behaviour.
+"""
+
+from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import random
 from typing import Any, Callable
 
 import aiohttp
+from centrifuge import (
+    Client,
+    ClientEventHandler,
+    ConnectedContext,
+    DisconnectedContext,
+    PublicationContext,
+    SubscribedContext,
+    SubscribingContext,
+    SubscriptionErrorContext,
+    SubscriptionEventHandler,
+    UnauthorizedError,
+    UnsubscribedContext,
+)
+
+from .const import BASE_URL, CENTRIFUGO_TOKEN_PATH, CENTRIFUGO_WS_PATH, WS_BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-INITIAL_BACKOFF = 1.0
-MAX_BACKOFF = 60.0
-BACKOFF_MULTIPLIER = 2.0
-
 
 class GalaxieWebSocketClient:
-    """Manages a WebSocket connection to the Galaxie backend for a single run."""
+    """Manages a Centrifugo subscription for a single live run."""
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        ws_url: str,
         run_id: str,
         on_run_detail: Callable[[dict[str, Any]], None],
         on_vehicle_list: Callable[[list], None],
         on_disconnect: Callable[[], None],
+        *,
+        ws_base_url: str = WS_BASE_URL,
+        api_base_url: str = BASE_URL,
     ) -> None:
         self._session = session
-        self._ws_url = ws_url
         self._run_id = run_id
         self._on_run_detail = on_run_detail
         self._on_vehicle_list = on_vehicle_list
         self._on_disconnect = on_disconnect
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
-        self._task: asyncio.Task | None = None
-        self._closing = False
+        self._ws_url = f"{ws_base_url}{CENTRIFUGO_WS_PATH}"
+        self._token_url = f"{api_base_url}{CENTRIFUGO_TOKEN_PATH}"
+        self._channel = f"run:{run_id}"
+
+        self._client: Client | None = None
+        self._sub = None
         self._connected = False
+        self._closing = False
+        self._disconnect_fired = False
 
     @property
     def connected(self) -> bool:
-        """Return True if the WebSocket is currently connected."""
+        """Return True while the Centrifugo connection is up."""
         return self._connected
 
     @property
     def run_id(self) -> str:
-        """Return the run ID this client is connected to."""
+        """Return the run ID this client is subscribed to."""
         return self._run_id
 
+    async def _get_token(self) -> str:
+        """Fetch a short-lived Centrifugo JWT from the Galaxie backend.
+
+        The token endpoint is public (anonymous users are allowed) so no
+        auth headers are required. Raises ``UnauthorizedError`` on 401/403
+        so centrifuge-python treats it as a terminal auth failure.
+        """
+        try:
+            async with self._session.post(self._token_url) as response:
+                if response.status in (401, 403):
+                    raise UnauthorizedError()
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"Centrifugo token endpoint returned {response.status}"
+                    )
+                data = await response.json()
+                token = data.get("token", "")
+                if not isinstance(token, str) or not token:
+                    raise RuntimeError("Centrifugo token endpoint returned empty token")
+                return token
+        except UnauthorizedError:
+            raise
+        except Exception as err:  # noqa: BLE001 — surfaced via centrifuge-python
+            _LOGGER.warning("Failed to fetch Centrifugo token: %s", err)
+            raise
+
+    def _handle_publication_data(self, data: Any) -> None:
+        """Route a single publication envelope to the appropriate callback."""
+        if not isinstance(data, dict):
+            return
+        msg_type = data.get("type")
+        payload = data.get("data")
+        if payload is None:
+            return
+        if msg_type == "run_detail" and isinstance(payload, dict):
+            self._on_run_detail(payload)
+        elif msg_type == "vehicle_list" and isinstance(payload, list):
+            self._on_vehicle_list(payload)
+        # All other types (Arrow-encoded vehicle_laps, pit_stops, etc.) ignored.
+
+    def _build_client_events(self) -> ClientEventHandler:
+        client_self = self
+
+        class _ClientEvents(ClientEventHandler):
+            async def on_connected(self, ctx: ConnectedContext) -> None:
+                client_self._connected = True
+                _LOGGER.info(
+                    "Centrifugo connected for run %s", client_self._run_id
+                )
+
+            async def on_disconnected(self, ctx: DisconnectedContext) -> None:
+                client_self._connected = False
+                _LOGGER.info(
+                    "Centrifugo disconnected for run %s: %s",
+                    client_self._run_id,
+                    getattr(ctx, "reason", ""),
+                )
+
+        return _ClientEvents()
+
+    def _build_subscription_events(self) -> SubscriptionEventHandler:
+        client_self = self
+
+        class _SubEvents(SubscriptionEventHandler):
+            async def on_subscribing(self, ctx: SubscribingContext) -> None:
+                _LOGGER.debug(
+                    "Centrifugo subscribing to %s", client_self._channel
+                )
+
+            async def on_subscribed(self, ctx: SubscribedContext) -> None:
+                _LOGGER.info("Centrifugo subscribed to %s", client_self._channel)
+
+            async def on_unsubscribed(self, ctx: UnsubscribedContext) -> None:
+                _LOGGER.info(
+                    "Centrifugo unsubscribed from %s: %s",
+                    client_self._channel,
+                    getattr(ctx, "reason", ""),
+                )
+
+            async def on_publication(self, ctx: PublicationContext) -> None:
+                client_self._handle_publication_data(ctx.pub.data)
+
+            async def on_error(self, ctx: SubscriptionErrorContext) -> None:
+                _LOGGER.warning(
+                    "Centrifugo subscription error on %s: %s",
+                    client_self._channel,
+                    ctx,
+                )
+
+        return _SubEvents()
+
     def start(self) -> None:
-        """Start the WebSocket connection in a background task."""
-        if self._task is None or self._task.done():
-            self._closing = False
-            self._task = asyncio.create_task(self._run())
+        """Open the Centrifugo connection and subscribe to the run channel."""
+        if self._client is not None:
+            return
+        self._closing = False
+        self._disconnect_fired = False
+
+        self._client = Client(
+            self._ws_url,
+            events=self._build_client_events(),
+            get_token=self._get_token,
+            use_protobuf=False,
+        )
+        self._sub = self._client.new_subscription(
+            self._channel,
+            events=self._build_subscription_events(),
+        )
+
+        # centrifuge-python `connect()` / `subscribe()` are awaitables that
+        # kick off background asyncio tasks. Schedule them without awaiting —
+        # the coordinator calls `start()` from sync context.
+        asyncio.create_task(self._sub.subscribe())
+        asyncio.create_task(self._client.connect())
 
     async def stop(self) -> None:
-        """Gracefully close the WebSocket connection."""
+        """Gracefully disconnect from Centrifugo."""
         self._closing = True
-        if self._ws is not None and not self._ws.closed:
-            await self._ws.close()
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        client = self._client
+        sub = self._sub
+        self._client = None
+        self._sub = None
         self._connected = False
 
-    async def _run(self) -> None:
-        """Main loop: connect, receive messages, reconnect on failure."""
-        backoff = INITIAL_BACKOFF
-        while not self._closing:
+        if sub is not None:
             try:
-                async with self._session.ws_connect(self._ws_url) as ws:
-                    self._ws = ws
-                    self._connected = True
-                    backoff = INITIAL_BACKOFF
-                    _LOGGER.info("WebSocket connected for run %s", self._run_id)
-
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            self._handle_message(msg.data)
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error(
-                                "WebSocket error for run %s: %s",
-                                self._run_id,
-                                ws.exception(),
-                            )
-                            break
-                        elif msg.type in (
-                            aiohttp.WSMsgType.CLOSE,
-                            aiohttp.WSMsgType.CLOSING,
-                            aiohttp.WSMsgType.CLOSED,
-                        ):
-                            break
-
-            except aiohttp.ClientError as err:
-                _LOGGER.warning(
-                    "WebSocket connection failed for run %s: %s",
-                    self._run_id,
-                    err,
+                await sub.unsubscribe()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                _LOGGER.debug(
+                    "Error unsubscribing from %s", self._channel, exc_info=True
                 )
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                _LOGGER.exception("Unexpected WebSocket error for run %s", self._run_id)
-            finally:
-                self._connected = False
-                self._ws = None
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                _LOGGER.debug(
+                    "Error disconnecting Centrifugo client for run %s",
+                    self._run_id,
+                    exc_info=True,
+                )
 
-            if self._closing:
-                break
-
-            jitter = random.uniform(0, backoff * 0.5)
-            wait = min(backoff + jitter, MAX_BACKOFF)
-            _LOGGER.debug(
-                "WebSocket reconnecting for run %s in %.1fs",
-                self._run_id,
-                wait,
-            )
-            await asyncio.sleep(wait)
-            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF)
-
-        self._on_disconnect()
-
-    def _handle_message(self, raw: str) -> None:
-        """Route incoming WebSocket messages to appropriate handlers."""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            _LOGGER.warning(
-                "Received non-JSON WebSocket message for run %s", self._run_id
-            )
-            return
-
-        msg_type = data.get("type")
-        if msg_type == "run_detail":
-            payload = data.get("data")
-            if payload is not None:
-                self._on_run_detail(payload)
-        elif msg_type == "vehicle_list":
-            payload = data.get("data")
-            if payload is not None:
-                self._on_vehicle_list(payload)
-        # All other message types (Arrow-encoded vehicle_laps, pit_stops, etc.)
-        # are silently ignored.
+        if not self._disconnect_fired:
+            self._disconnect_fired = True
+            self._on_disconnect()

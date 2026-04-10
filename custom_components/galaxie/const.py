@@ -32,6 +32,13 @@ API_ENDPOINTS = {
     "config": "/api/config/",
 }
 
+# Centrifugo WebSocket transport for live race broadcasts.
+# The server migrated live race fan-out from Django Channels to Centrifugo
+# (see galaxie docs/tasks/centrifugo-migration/). Live run data is published
+# to channel ``run:{run_id}`` with the envelope ``{type, data, metadata}``.
+CENTRIFUGO_WS_PATH = "/connection/websocket"
+CENTRIFUGO_TOKEN_PATH = "/api/centrifugo/token/"
+
 # Update intervals
 UPDATE_INTERVAL_PREVIOUS_NEXT = timedelta(minutes=15)
 UPDATE_INTERVAL_LIVE = timedelta(seconds=15)

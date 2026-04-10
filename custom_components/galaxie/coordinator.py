@@ -17,7 +17,6 @@ from .const import (
     UPDATE_INTERVAL_CONFIG,
     UPDATE_INTERVAL_LIVE,
     UPDATE_INTERVAL_WEATHER,
-    WS_BASE_URL,
 )
 from .websocket_client import GalaxieWebSocketClient
 
@@ -97,17 +96,15 @@ class GalaxieDataCoordinator(DataUpdateCoordinator):
                     await self._ws_client.stop()
 
                 self._current_run_id = run_id
-                ws_url = f"{WS_BASE_URL}/ws/runs/{run_id}/"
                 self._ws_client = GalaxieWebSocketClient(
                     session=self.session,
-                    ws_url=ws_url,
                     run_id=run_id,
                     on_run_detail=self._ws_on_run_detail,
                     on_vehicle_list=self._ws_on_vehicle_list,
                     on_disconnect=self._ws_on_disconnect,
                 )
                 self._ws_client.start()
-                _LOGGER.info("Started WebSocket for run %s", run_id)
+                _LOGGER.info("Started Centrifugo subscription for run %s", run_id)
         else:
             # No live race -- disconnect WS if active
             if self._ws_client:
